@@ -8,7 +8,7 @@ namespace Nuka.SDK.Redis
     [ExcludeFromCodeCoverage]
     public static class RedisExtensions
     {
-        private const string HmGetScript = "return redis.call('HMGET', KEY[1], unpack(ARGV))";
+        private const string HmGetScript = "return redis.call('HMGET', KEYS[1], unpack(ARGV))";
 
         internal static RedisValue[] HashMemberGet(
             this IDatabase database,
@@ -26,10 +26,11 @@ namespace Nuka.SDK.Redis
             string key,
             params string[] members)
         {
-            return (RedisValue[]) await database.ScriptEvaluateAsync(
+            var result = (RedisValue[]) await database.ScriptEvaluateAsync(
                 HmGetScript,
                 new RedisKey[] {key},
                 GetRedisMembers(members));
+            return result;
         }
 
         private static RedisValue[] GetRedisMembers(params string[] members)

@@ -17,13 +17,14 @@ namespace Nuka.SDK.Redis
     public class NukaRedisCache : IDistributedCache
     {
         #region Variables
+
         private const string SetScript = (@"
                 redis.call('HMSET', KEYS[1], 'absexp', ARGV[1], 'sldexp', ARGV[2], 'data', ARGV[4])
                 if ARGV[3] ~= '-1' then
                   redis.call('EXPIRE', KEYS[1], ARGV[3])
                 end
                 return 1");
-        
+
         private const string AbsoluteExpirationKey = "absexp";
         private const string SlidingExpirationKey = "sldexp";
         private const string DataKey = "data";
@@ -53,7 +54,7 @@ namespace Nuka.SDK.Redis
             _options = optionsAccessor.Value;
             _logger = logger;
 
-            _instance = _options.InstanceName;
+            _instance = _options.InstanceName ?? string.Empty;
 
             _syncPolicy = Policy
                 .Handle<RedisConnectionException>()
@@ -87,14 +88,15 @@ namespace Nuka.SDK.Redis
         private void Connect()
         {
             if (_database != null) return;
+
             _connectionLock.Wait();
 
             try
             {
                 if (_database == null) return;
                 _connection = _options.ConfigurationOptions != null
-                    ? ConnectionMultiplexer.Connect(_options.Configuration)
-                    : ConnectionMultiplexer.Connect(_options.ConfigurationOptions);
+                    ? ConnectionMultiplexer.Connect(_options.ConfigurationOptions)
+                    : ConnectionMultiplexer.Connect(_options.Configuration);
                 _database = _connection.GetDatabase();
             }
             finally
@@ -107,17 +109,17 @@ namespace Nuka.SDK.Redis
         {
             token.ThrowIfCancellationRequested();
 
-            if (_database == null) return;
+            if (_database != null) return;
 
             await _connectionLock.WaitAsync(token);
 
             try
             {
-                if (_database != null)
+                if (_database == null)
                 {
-                    _connection = _options.Configuration != null
-                        ? await ConnectionMultiplexer.ConnectAsync(_options.Configuration)
-                        : await ConnectionMultiplexer.ConnectAsync(_options.ConfigurationOptions);
+                    _connection = _options.ConfigurationOptions != null
+                        ? await ConnectionMultiplexer.ConnectAsync(_options.ConfigurationOptions)
+                        : await ConnectionMultiplexer.ConnectAsync(_options.Configuration);
 
                     _database = _connection.GetDatabase();
                 }
@@ -131,18 +133,22 @@ namespace Nuka.SDK.Redis
         private void Reconnect()
         {
             _connectionLock.Wait();
+
             try
             {
                 _logger.LogWarning("redis-attempting-to-reconnect");
 
-                try
+                if (_connection != null)
                 {
-                    _connection?.Close();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError("redis-reconnection-close-old-connection-error",
-                        new Dictionary<string, string> {["error_message"] = ex.Message});
+                    try
+                    {
+                        _connection.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError("redis-reconnection-close-old-connection-error",
+                            new Dictionary<string, string> {["error_message"] = ex.Message});
+                    }
                 }
 
                 _connection = _options.ConfigurationOptions != null
@@ -166,6 +172,7 @@ namespace Nuka.SDK.Redis
         private async Task ReconnectAsync(CancellationToken token = default)
         {
             token.ThrowIfCancellationRequested();
+
             await _connectionLock.WaitAsync(token);
 
             try
@@ -233,12 +240,12 @@ namespace Nuka.SDK.Redis
         {
             if (key == null)
             {
-                throw new ArgumentException(nameof(key));
+                throw new ArgumentNullException(nameof(key));
             }
 
             Connect();
 
-            RedisValue[] results = getData
+            var results = getData
                 ? _database.HashMemberGet(_instance + key, AbsoluteExpirationKey, SlidingExpirationKey, DataKey)
                 : _database.HashMemberGet(_instance + key, AbsoluteExpirationKey, SlidingExpirationKey);
 
@@ -256,7 +263,9 @@ namespace Nuka.SDK.Redis
             return null;
         }
 
-        private async Task<byte[]> GetAndRefreshAsync(string key, bool getData,
+        private async Task<byte[]> GetAndRefreshAsync(
+            string key,
+            bool getData,
             CancellationToken token = default)
         {
             if (key == null)
@@ -269,12 +278,18 @@ namespace Nuka.SDK.Redis
             RedisValue[] results;
             if (getData)
             {
-                results = await _database.HashMemberGetAsync(_instance + key, AbsoluteExpirationKey, SlidingExpirationKey,
+                results = await _database.HashMemberGetAsync(
+                    _instance + key, 
+                    AbsoluteExpirationKey,
+                    SlidingExpirationKey, 
                     DataKey);
             }
             else
             {
-                results = await _database.HashMemberGetAsync(_instance + key, AbsoluteExpirationKey, SlidingExpirationKey);
+                results = await _database.HashMemberGetAsync(
+                    _instance + key, 
+                    AbsoluteExpirationKey,
+                    SlidingExpirationKey);
             }
 
             if (results.Length >= 2)
@@ -291,7 +306,9 @@ namespace Nuka.SDK.Redis
             return null;
         }
 
-        private void MapMetadata(IReadOnlyList<RedisValue> results, out DateTimeOffset? absoluteExpiration,
+        private static void MapMetadata(
+            IReadOnlyList<RedisValue> results, 
+            out DateTimeOffset? absoluteExpiration,
             out TimeSpan? slidingExpiration)
         {
             absoluteExpiration = null;
@@ -310,7 +327,7 @@ namespace Nuka.SDK.Redis
         {
             if (key == null)
             {
-                throw new ArgumentException(nameof(key));
+                throw new ArgumentNullException(nameof(key));
             }
 
             TimeSpan? expr;
@@ -351,25 +368,32 @@ namespace Nuka.SDK.Redis
             }
         }
 
-        private static long? GetExpirationInSeconds(DateTimeOffset creationTime, DateTimeOffset? absoluteExpiration, DistributedCacheEntryOptions options)
+        private static long? GetExpirationInSeconds(
+            DateTimeOffset creationTime, 
+            DateTimeOffset? absoluteExpiration,
+            DistributedCacheEntryOptions options)
         {
             if (absoluteExpiration.HasValue && options.SlidingExpiration.HasValue)
             {
-                return (long)Math.Min(
+                return (long) Math.Min(
                     (absoluteExpiration.Value - creationTime).TotalSeconds,
                     options.SlidingExpiration.Value.TotalSeconds);
             }
             else if (absoluteExpiration.HasValue)
             {
-                return (long)(absoluteExpiration.Value - creationTime).TotalSeconds;
+                return (long) (absoluteExpiration.Value - creationTime).TotalSeconds;
             }
             else if (options.SlidingExpiration.HasValue)
             {
-                return (long)options.SlidingExpiration.Value.TotalSeconds;
+                return (long) options.SlidingExpiration.Value.TotalSeconds;
             }
+
             return null;
         }
-        private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset creationTime, DistributedCacheEntryOptions options)
+
+        private static DateTimeOffset? GetAbsoluteExpiration(
+            DateTimeOffset creationTime,
+            DistributedCacheEntryOptions options)
         {
             if (options.AbsoluteExpiration.HasValue && options.AbsoluteExpiration <= creationTime)
             {
@@ -378,6 +402,7 @@ namespace Nuka.SDK.Redis
                     options.AbsoluteExpiration.Value,
                     "The absolute expiration value must be in the future.");
             }
+
             var absoluteExpiration = options.AbsoluteExpiration;
             if (options.AbsoluteExpirationRelativeToNow.HasValue)
             {
@@ -386,6 +411,7 @@ namespace Nuka.SDK.Redis
 
             return absoluteExpiration;
         }
+
         #endregion
 
         #region Overrides
@@ -401,7 +427,7 @@ namespace Nuka.SDK.Redis
         public async Task<byte[]> GetAsync(string key, CancellationToken token = default)
         {
             if (key == null)
-                throw new ArgumentException(nameof(key));
+                throw new ArgumentNullException(nameof(key));
 
             token.ThrowIfCancellationRequested();
             return await ExecuteAndCaptureAsync(async () => await GetAndRefreshAsync(key, true, token));
@@ -461,16 +487,16 @@ namespace Nuka.SDK.Redis
             {
                 throw new ArgumentNullException(nameof(options));
             }
-            
+
             Connect();
 
             var creationTime = DateTimeOffset.Now;
-            
+
             var absoluteExpiration = GetAbsoluteExpiration(creationTime, options);
-            
+
             Execute(() =>
             {
-                _database.ScriptEvaluate(SetScript, new RedisKey[] { _instance + key },
+                _database.ScriptEvaluate(SetScript, new RedisKey[] {_instance + key},
                     new RedisValue[]
                     {
                         absoluteExpiration?.Ticks ?? NotPresent,
@@ -509,7 +535,7 @@ namespace Nuka.SDK.Redis
 
             await ExecuteAsync(async () =>
             {
-                await _database.ScriptEvaluateAsync(SetScript, new RedisKey[] { _instance + key },
+                await _database.ScriptEvaluateAsync(SetScript, new RedisKey[] {_instance + key},
                     new RedisValue[]
                     {
                         absoluteExpiration?.Ticks ?? NotPresent,
