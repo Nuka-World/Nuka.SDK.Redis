@@ -23,7 +23,14 @@ namespace Nuka.SDK.Redis.App.Controllers
         }
 
         // ** GET api/v1/users/{userId} **
+        /// <summary>
+        ///  Get a user.
+        /// </summary>
+        /// <param name="userid">User ID</param>
+        /// <returns>Single object. Possible response status codes are 200 and 500.</returns>
         [HttpGet("{userid}", Name = "User")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(500)]
         public async Task<IActionResult> GetAsync(string userid)
         {
             try
@@ -42,7 +49,14 @@ namespace Nuka.SDK.Redis.App.Controllers
         }
 
         // ** PUT api/v1/users/{userId} **
+        /// <summary>
+        /// Set a user.
+        /// </summary>
+        /// <param name="userId">User ID</param>
+        /// <returns>Possible response status codes are 200 and 500.</returns>
         [HttpPut("{userId}", Name = "User")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(500)]
         public async Task<IActionResult> PutUserAsync(string userId)
         {
             try
